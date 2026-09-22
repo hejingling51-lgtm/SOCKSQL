@@ -441,6 +441,8 @@ if "form_status" not in st.session_state:
     st.session_state.form_status = None
 if "category" not in st.session_state:
     st.session_state.category = "all"
+if "form_key" not in st.session_state:
+    st.session_state.form_key = 0
 
 
 def toggle_lang():
@@ -456,9 +458,8 @@ def handle_form_submit():
         return
     if api_post_message(name, email, message):
         st.session_state.form_status = "success"
-        st.session_state.input_name = ""
-        st.session_state.input_email = ""
-        st.session_state.input_message = ""
+        # 改變 form_key，讓下一次渲染時產生全新的輸入框（相當於清空內容）
+        st.session_state.form_key += 1
     else:
         st.session_state.form_status = "api_error"
 
@@ -649,26 +650,21 @@ elif page == T["nav_contact"]:
     elif st.session_state.form_status == "api_error":
         st.error(T["api_error"])
 
-    # 留言表單
-    st.text_input(T["form_name"], key="input_name")
-    st.text_input(T["form_email"], key="input_email")
-    st.text_area(T["form_message"], key="input_message")
+    # 留言表單（使用動態 key 來達成送出後清空輸入框的效果）
+    form_key = st.session_state.form_key
+    st.text_input(T["form_name"], key=f"input_name_{form_key}")
+    st.text_input(T["form_email"], key=f"input_email_{form_key}")
+    st.text_area(T["form_message"], key=f"input_message_{form_key}")
 
-    if st.button(T["form_submit"]):
-        handle_form_submit()
-        st.rerun()
-
-    st.markdown("---")
-
-    # 顯示歷史留言
-    st.subheader(T["message_log"])
-    messages = api_get_messages()
-    if messages:
-        for msg in messages:
-            st.markdown(
-                f"**{msg.get('name', '匿名')}** ({msg.get('email', '')})  \n"
-                f"{msg.get('message', '')}"
-            )
-            st.markdown("---")
-    else:
-        st.info(T["no_messages"])
+    # 為了讓 handle_form_submit 能讀取到值，我們把動態 key 的值存回固定的變數名稱
+    # 但因為 Streamlit 的限制，我們改用另一種方式：直接在按鈕點擊時讀取動態 key 的值
+    if st.button(T["form_submit"], key=f"submit_btn_{form_key}"):
+        name = st.session_state.get(f"input_name_{form_key}", "").strip()
+        email = st.session_state.get(f"input_email_{form_key}", "").strip()
+        message = st.session_state.get(f"input_message_{form_key}", "").strip()
+        if not name or not email or not message:
+            st.session_state.form_status = "error"
+        else:
+            if api_post_message(name, email, message):
+                st.session_state.form_status = "success"
+                st.session_state.form_key += 1  # 改變 key
