@@ -7,7 +7,7 @@ import requests
 from PIL import Image, ImageFilter, ImageDraw
 
 # ==================== API 設定 ====================
-API_BASE = os.environ.get("API_BASE", "http://127.0.0.1:5000")
+API_BASE = "https://socksql.onrender.com"
 
 
 # ==================== API 工具函式 ====================
