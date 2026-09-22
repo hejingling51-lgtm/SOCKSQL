@@ -617,4 +617,4 @@ elif page == T["nav_about"]:
     st.markdown("---")
     st.markdown("### 🏭 " + T["advantages_title"])
     adv_cols = st.columns(4)
-    for i, (icon, title, desc) in enumerate
+   for i, (icon, title, desc) in enumerate(T["advantages"]):
