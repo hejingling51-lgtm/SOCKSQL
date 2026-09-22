@@ -617,4 +617,13 @@ elif page == T["nav_about"]:
     st.markdown("---")
     st.markdown("### 🏭 " + T["advantages_title"])
     adv_cols = st.columns(4)
-   for i, (icon, title, desc) in enumerate(T["advantages"]):
+    for i, (icon, title, desc) in enumerate(T["advantages"]):
+        with adv_cols[i]:
+            adv_html = (
+                '<div style="text-align:center; padding:1rem;">'
+                '<div style="font-size:2rem;">' + icon + '</div>'
+                '<h4>' + title + '</h4>'
+                '<p style="color:#777; font-size:0.9rem;">' + desc + '</p>'
+                '</div>'
+            )
+            st.markdown(adv_html, unsafe_allow_html=True)
