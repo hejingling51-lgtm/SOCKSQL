@@ -61,7 +61,7 @@ st.set_page_config(
 
 # ==================== 路徑設定 ====================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-IMAGE_DIR = os.path.join(BASE_DIR, "images")
+IMAGE_DIR = IMAGE_DIR = BASE_DIR")
 
 PRODUCT_IMAGES = {f"product{i}": f"product{i}.jpg" for i in range(1, 11)}
 DUCK_IMAGE = "duck.jpg"
