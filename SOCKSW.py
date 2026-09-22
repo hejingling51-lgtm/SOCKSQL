@@ -61,7 +61,7 @@ st.set_page_config(
 
 # ==================== 路徑設定 ====================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-IMAGE_DIR = IMAGE_DIR = BASE_DIR
+IMAGE_DIR = BASE_DIR
 
 PRODUCT_IMAGES = {f"product{i}": f"product{i}.jpg" for i in range(1, 11)}
 DUCK_IMAGE = "duck.jpg"
@@ -175,7 +175,7 @@ else:
     visit_count = api_get_visits()
 
 
-# ==================== 自訂 CSS（與原本相同） ====================
+# ==================== 自訂 CSS ====================
 CSS = """
 <style>
     * { font-family: 'Helvetica Neue', 'Microsoft YaHei', sans-serif; }
@@ -262,7 +262,7 @@ CSS = """
 st.markdown(CSS, unsafe_allow_html=True)
 
 
-# ==================== 雙語字典（與原本相同） ====================
+# ==================== 雙語字典 ====================
 TEXTS = {
     "en": {
         "title": "Gabriel-JL Co., Ltd.",
@@ -340,6 +340,9 @@ With years of experience in the textile industry, we are committed to providing 
         "cat_children": "🧒 Children SOCKS",
         "cat_adult": "🧑 Adult SOCKS",
         "cat_label": "Category",
+        "message_log": "📝 Message Log",
+        "no_messages": "No messages yet. Be the first to leave one!",
+        "api_error": "⚠️ API connection failed. Please try again later.",
     },
     "zh": {
         "title": "Gabriel-JL 有限公司",
@@ -417,6 +420,9 @@ With years of experience in the textile industry, we are committed to providing 
         "cat_children": "🧒 兒童襪",
         "cat_adult": "🧑 成人襪",
         "cat_label": "產品分類",
+        "message_log": "📝 留言紀錄",
+        "no_messages": "目前沒有留言，歡迎成為第一個留言的人！",
+        "api_error": "⚠️ API 連線失敗，請稍後再試。",
     }
 }
 
@@ -627,3 +633,42 @@ elif page == T["nav_about"]:
                 '</div>'
             )
             st.markdown(adv_html, unsafe_allow_html=True)
+
+
+# ==================== 聯絡我們 / 留言 ====================
+elif page == T["nav_contact"]:
+    st.markdown("## " + T["contact_title"])
+    st.markdown("---")
+    st.markdown(T["contact_desc"])
+
+    # 顯示表單狀態
+    if st.session_state.form_status == "success":
+        st.success(T["form_success"])
+    elif st.session_state.form_status == "error":
+        st.error(T["form_error"])
+    elif st.session_state.form_status == "api_error":
+        st.error(T["api_error"])
+
+    # 留言表單
+    st.text_input(T["form_name"], key="input_name")
+    st.text_input(T["form_email"], key="input_email")
+    st.text_area(T["form_message"], key="input_message")
+
+    if st.button(T["form_submit"]):
+        handle_form_submit()
+        st.rerun()
+
+    st.markdown("---")
+
+    # 顯示歷史留言
+    st.subheader(T["message_log"])
+    messages = api_get_messages()
+    if messages:
+        for msg in messages:
+            st.markdown(
+                f"**{msg.get('name', '匿名')}** ({msg.get('email', '')})  \n"
+                f"{msg.get('message', '')}"
+            )
+            st.markdown("---")
+    else:
+        st.info(T["no_messages"])
