@@ -9,26 +9,34 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def build_db_uri():
+    """優先使用 DATABASE_URL（Render PostgreSQL / Neon），否則退回 SQLite。"""
     url = os.environ.get("DATABASE_URL", "").strip()
     if url:
+        # 統一用 psycopg3 驅動（支援 Python 3.14）
         if url.startswith("postgres://"):
-            url = url.replace("postgres://", "postgresql://", 1)
+            url = url.replace("postgres://", "postgresql+psycopg://", 1)
+        elif url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
         return url
+    # 本機開發備援：SQLite
     return f"sqlite:///{os.path.join(BASE_DIR, 'messages.db')}"
 
 
 def create_app():
     app = Flask(__name__)
+
     app.config["SQLALCHEMY_DATABASE_URI"] = build_db_uri()
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
         "pool_pre_ping": True,
         "pool_recycle": 280,
     }
+
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
     CORS(app, resources={r"/api/*": {"origins": "*"}})
 
     db.init_app(app)
+
     with app.app_context():
         db.create_all()
         VisitCounter.get_count()
@@ -47,12 +55,14 @@ def create_app():
         name = (data.get("name") or "").strip()
         email = (data.get("email") or "").strip()
         message = (data.get("message") or "").strip()
+
         if not name or not email or not message:
             return jsonify({"ok": False, "error": "missing_fields"}), 400
         if "@" not in email or "." not in email.split("@")[-1]:
             return jsonify({"ok": False, "error": "invalid_email"}), 400
         if len(name) > 80 or len(email) > 160 or len(message) > 2000:
             return jsonify({"ok": False, "error": "too_long"}), 400
+
         msg = add_message(name, email, message)
         return jsonify({"ok": True, "message": msg.to_dict()}), 201
 
