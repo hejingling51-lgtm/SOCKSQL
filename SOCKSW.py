@@ -459,9 +459,8 @@ def toggle_lang():
 
 def handle_form_submit():
     """處理表單提交。
-    注意：不要手動清空 input_name / input_email / input_message，
+    注意：不手動清空 input_name / input_email / input_message，
     因為 st.form(clear_on_submit=True) 會自動清空。
-    若手動賦值會拋出 StreamlitWidgetAlreadyInstantiatedError。
     """
     name = st.session_state.get("input_name", "").strip()
     email = st.session_state.get("input_email", "").strip()
@@ -696,4 +695,7 @@ elif page == T["nav_contact"]:
             st.markdown(
                 '<div class="msg-card">'
                 '<div class="meta"><span class="name">' + name + '</span> · ' + created + '</div>'
-               
+                '<div class="body">' + body + '</div>'
+                '</div>',
+                unsafe_allow_html=True
+            )
