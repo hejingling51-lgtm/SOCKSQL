@@ -1,119 +1,694 @@
-# app.py
+# SOCKSW.py
+import streamlit as st
 import os
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from werkzeug.middleware.proxy_fix import ProxyFix
-from database import db, Message, VisitCounter, add_message, list_messages
+import io
+import base64
+import requests
+from PIL import Image, ImageFilter, ImageDraw
 
+# ==================== API 設定 ====================
+API_BASE = "https://socksql-1.onrender.com"
+
+
+# ==================== API 工具函式 ====================
+def api_get_messages(limit=200):
+    try:
+        r = requests.get(f"{API_BASE}/api/messages",
+                         params={"limit": limit}, timeout=30)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        st.warning(f"讀取留言失敗：{e}")
+        return []
+
+
+def api_post_message(name, email, message):
+    try:
+        r = requests.post(f"{API_BASE}/api/messages",
+                          json={"name": name, "email": email, "message": message},
+                          timeout=30)
+        return r.status_code == 201
+    except Exception as e:
+        st.warning(f"送出留言失敗：{e}")
+        return False
+
+
+def api_get_visits():
+    try:
+        r = requests.get(f"{API_BASE}/api/visits", timeout=30)
+        r.raise_for_status()
+        return r.json().get("count", 0)
+    except Exception:
+        return 0
+
+
+def api_inc_visits():
+    try:
+        r = requests.post(f"{API_BASE}/api/visits", timeout=30)
+        r.raise_for_status()
+        return r.json().get("count", 0)
+    except Exception:
+        return 0
+
+
+# ==================== 頁面配置 ====================
+st.set_page_config(
+    page_title="Gabriel-JL Co., Ltd. | SOCKS",
+    page_icon="🧦",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ==================== 路徑設定 ====================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+IMAGE_DIR = os.path.join(BASE_DIR, "images")
+
+PRODUCT_IMAGES = {f"product{i}": f"product{i}.jpg" for i in range(1, 11)}
+DUCK_IMAGE = "duck.jpg"
 
 
-def build_db_uri():
-    """優先使用 DATABASE_URL（Render PostgreSQL / Neon），否則退回 SQLite。"""
-    url = os.environ.get("DATABASE_URL", "").strip()
-    if url:
-        # 統一用 psycopg3 驅動（支援 Python 3.14）
-        if url.startswith("postgres://"):
-            url = url.replace("postgres://", "postgresql+psycopg://", 1)
-        elif url.startswith("postgresql://"):
-            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
-        return url
-    # 本機開發備援：SQLite
-    return f"sqlite:///{os.path.join(BASE_DIR, 'messages.db')}"
+# ==================== 備援：用 PIL 畫一隻鴨子 ====================
+def _draw_fallback_duck(size=200):
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    s = size / 200.0
+    d.ellipse([40*s, 90*s, 160*s, 170*s], fill=(0, 0, 0, 255))
+    d.ellipse([120*s, 40*s, 180*s, 100*s], fill=(0, 0, 0, 255))
+    d.polygon([(120*s, 70*s), (140*s, 70*s),
+               (150*s, 120*s), (120*s, 120*s)], fill=(0, 0, 0, 255))
+    d.polygon([(178*s, 68*s), (200*s, 78*s), (178*s, 88*s)], fill=(0, 0, 0, 255))
+    d.polygon([(40*s, 110*s), (10*s, 90*s), (40*s, 140*s)], fill=(0, 0, 0, 255))
+    d.ellipse([155*s, 60*s, 165*s, 70*s], fill=(255, 255, 255, 255))
+    d.rectangle([70*s, 165*s, 80*s, 195*s], fill=(0, 0, 0, 255))
+    d.rectangle([110*s, 165*s, 120*s, 195*s], fill=(0, 0, 0, 255))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
 
 
-def create_app():
-    app = Flask(__name__)
+@st.cache_data(show_spinner=False)
+def _make_duck_from_file(image_path, rotate_degrees=90, crop_border=8,
+                         line_threshold=40, line_color=(0, 0, 0),
+                         thicken=True, thicken_passes=2):
+    img = Image.open(image_path).convert("RGB")
+    if rotate_degrees == 90:
+        img = img.transpose(Image.ROTATE_90)
+    elif rotate_degrees == 180:
+        img = img.transpose(Image.ROTATE_180)
+    elif rotate_degrees == 270:
+        img = img.transpose(Image.ROTATE_270)
+    if crop_border > 0:
+        w, h = img.size
+        img = img.crop((crop_border, crop_border, w - crop_border, h - crop_border))
+    img = img.convert("RGBA")
+    new_data = []
+    for r, g, b, a in img.getdata():
+        brightness = 0.299 * r + 0.587 * g + 0.114 * b
+        if brightness <= line_threshold:
+            new_data.append((line_color[0], line_color[1], line_color[2], 255))
+        else:
+            new_data.append((0, 0, 0, 0))
+    img.putdata(new_data)
+    if thicken and thicken_passes > 0:
+        alpha = img.split()[3]
+        for _ in range(thicken_passes):
+            alpha = alpha.filter(ImageFilter.MaxFilter(3))
+        r, g, b, _ = img.split()
+        img = Image.merge("RGBA", (r, g, b, alpha))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
 
-    app.config["SQLALCHEMY_DATABASE_URI"] = build_db_uri()
-    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-        "pool_pre_ping": True,
-        "pool_recycle": 280,
+
+def make_duck_clean(image_path, **kwargs):
+    if not os.path.exists(image_path):
+        return _draw_fallback_duck()
+    try:
+        return _make_duck_from_file(image_path, **kwargs)
+    except Exception as e:
+        print("Duck image error:", e)
+        return _draw_fallback_duck()
+
+
+@st.cache_data(show_spinner=False)
+def load_image_b64(filename):
+    path = os.path.join(IMAGE_DIR, filename)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+        img = Image.open(io.BytesIO(raw))
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        max_side = 1200
+        if max(img.size) > max_side:
+            ratio = max_side / max(img.size)
+            img = img.resize((int(img.width*ratio), int(img.height*ratio)),
+                             Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception as e:
+        print("Image load error:", path, e)
+        return None
+
+
+# ==================== 載入鴨子圖 ====================
+duck_path = os.path.join(IMAGE_DIR, DUCK_IMAGE)
+duck_b64 = make_duck_clean(duck_path, rotate_degrees=90, crop_border=8,
+                           line_threshold=40, line_color=(0, 0, 0),
+                           thicken=True, thicken_passes=2)
+duck_src = "data:image/png;base64," + duck_b64
+ducks_html = (
+    '<img src="' + duck_src + '" class="duck-img duck-big" alt="big duck">'
+    '<img src="' + duck_src + '" class="duck-img duck-medium" alt="medium duck">'
+    '<img src="' + duck_src + '" class="duck-img duck-small" alt="small duck">'
+)
+
+
+# ==================== 瀏覽計次（改用 API） ====================
+if "visited" not in st.session_state:
+    st.session_state.visited = True
+    visit_count = api_inc_visits()
+else:
+    visit_count = api_get_visits()
+
+
+# ==================== 自訂 CSS ====================
+CSS = """
+<style>
+    * { font-family: 'Helvetica Neue', 'Microsoft YaHei', sans-serif; }
+    .header-banner {
+        position: relative;
+        background: linear-gradient(135deg, #a8b8e8 0%, #b8a8e0 50%, #9fa8e0 100%);
+        padding: 1.5rem 2rem; border-radius: 12px; text-align: center;
+        margin-bottom: 1.5rem; box-shadow: 0 4px 16px rgba(168, 184, 232, 0.4);
+        overflow: hidden; min-height: 170px;
     }
+    .header-banner .duck-img {
+        position: absolute; pointer-events: none; width: auto;
+        background: transparent; border: none; outline: none; box-shadow: none;
+    }
+    .header-banner .duck-big {
+        height: 90px; top: 25px; right: 300px;
+        animation: duckWalk 3.0s ease-in-out infinite; animation-delay: 0s; z-index: 10;
+    }
+    .header-banner .duck-medium {
+        height: 55px; top: 55px; right: 210px;
+        animation: duckWalk 3.0s ease-in-out infinite; animation-delay: 0.5s; z-index: 8;
+    }
+    .header-banner .duck-small {
+        height: 32px; top: 80px; right: 140px;
+        animation: duckWalk 3.0s ease-in-out infinite; animation-delay: 1.0s; z-index: 6;
+    }
+    @keyframes duckWalk {
+        0%   { transform: translateX(0); }
+        10%  { transform: translateX(10px); }
+        20%  { transform: translateX(20px); }
+        30%  { transform: translateX(30px); }
+        40%  { transform: translateX(40px); }
+        50%  { transform: translateX(50px); }
+        60%  { transform: translateX(40px); }
+        70%  { transform: translateX(30px); }
+        80%  { transform: translateX(20px); }
+        90%  { transform: translateX(10px); }
+        100% { transform: translateX(0); }
+    }
+    .header-banner h1 {
+        color: #ffffff; font-size: 1.8rem; margin: 0;
+        letter-spacing: 1.5px; position: relative; z-index: 20;
+        padding-right: 400px; text-align: left;
+    }
+    .header-banner p {
+        color: #ffffff; font-size: 1rem; margin-top: 0.3rem;
+        font-weight: 300; position: relative; z-index: 20;
+        padding-right: 400px; text-align: left;
+    }
+    .visit-counter {
+        display: inline-flex; align-items: center; gap: 0.6rem;
+        background: rgba(255,255,255,0.85); border: 2px solid #1a1a1a;
+        border-radius: 40px; padding: 0.4rem 1.2rem;
+        font-family: monospace; font-size: 1rem;
+        color: #1a1a1a; margin-bottom: 1rem;
+    }
+    .visit-counter .num { font-weight: 700; font-size: 1.4rem; color: #000; }
+    .product-card {
+        background: #ffffff; border-radius: 12px; padding: 1rem;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+        margin-bottom: 1rem; border: 1px solid #f0f0f0;
+    }
+    .product-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    }
+    .product-card .price { color: #e94560; font-size: 1.3rem; font-weight: bold; }
+    .product-card .desc { color: #555; font-size: 0.95rem; line-height: 1.6; }
+    .contact-card {
+        background: linear-gradient(135deg, #0f3460, #16213e);
+        color: #fff; border-radius: 12px; padding: 2rem; text-align: center;
+    }
+    .contact-card a { color: #e94560; text-decoration: none; }
+    .footer {
+        text-align: center; padding: 2rem 0 1rem 0;
+        color: #888; font-size: 0.85rem;
+        border-top: 1px solid #eee; margin-top: 3rem;
+    }
+    .msg-card {
+        background: #fff; border-left: 4px solid #a8b8e8;
+        border-radius: 8px; padding: 1rem 1.2rem; margin-bottom: 0.8rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+    .msg-card .meta {
+        color: #888; font-size: 0.85rem; margin-bottom: 0.3rem;
+    }
+    .msg-card .name { color: #0f3460; font-weight: 700; }
+    .msg-card .body { color: #333; line-height: 1.6; white-space: pre-wrap; }
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+</style>
+"""
+st.markdown(CSS, unsafe_allow_html=True)
 
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-    db.init_app(app)
+# ==================== 雙語字典 ====================
+TEXTS = {
+    "en": {
+        "title": "Gabriel-JL Co., Ltd.",
+        "subtitle": "Premium SOCKS Manufacturer & Supplier",
+        "nav_products": "🧦 Products",
+        "nav_about": "ℹ️ About Us",
+        "nav_contact": "📬 Contact / Message",
+        "products_title": "Our SOCKS Collection",
+        "products_desc": "High-quality socks for every occasion — sports, casual, business, and custom designs.",
+        "about_title": "About Gabriel-JL Co., Ltd.",
+        "about_text": """
+**Gabriel-JL Co., Ltd.** (Contact: He YA) is a professional manufacturer and exporter of all kinds of socks.
 
-    with app.app_context():
-        db.create_all()
-        VisitCounter.get_count()
+We specialize in:
+- 🏃 Sports socks (running, basketball, cycling)
+- 👔 Business & dress socks
+- 🧦 Casual & fashion socks
+- 🏭 Custom OEM/ODM orders
+- 🌿 Organic cotton & bamboo fiber socks
 
-    # ==================== 根路由（首頁） ====================
-    @app.route("/", methods=["GET"])
-    def index():
-        return jsonify({
-            "ok": True,
-            "service": "Gabriel-JL SOCKS API",
-            "version": "1.0",
-            "endpoints": {
-                "GET  /api/messages": "取得留言列表（可選參數 ?limit=200）",
-                "POST /api/messages": "新增留言（JSON: name, email, message）",
-                "GET  /api/visits":   "取得瀏覽次數",
-                "POST /api/visits":   "瀏覽次數 +1",
-                "GET  /api/health":   "健康檢查",
-            }
-        })
+With years of experience in the textile industry, we are committed to providing premium quality products with competitive prices.
 
-    # ==================== 留言 API ====================
-    @app.route("/api/messages", methods=["GET"])
-    def api_list_messages():
+**Email:** hejingling51@gmail.com
+""",
+        "contact_title": "Send Us a Message",
+        "contact_desc": "We'd love to hear from you! Leave your message below and we'll get back to you within 24 hours.",
+        "form_name": "Your Name",
+        "form_email": "Your Email",
+        "form_message": "Your Message",
+        "form_submit": "Send Message",
+        "form_success": "✅ Thank you! Your message has been received. We'll contact you soon.",
+        "form_error": "⚠️ Please fill in all fields.",
+        "board_title": "💬 Message Board",
+        "board_empty": "No messages yet. Be the first to leave one!",
+        "board_loading": "Loading messages...",
+        "product1_name": "Sports Socks",
+        "product1_desc": "Breathable, moisture-wicking, cushioned sole. Perfect for running and outdoor activities.",
+        "product1_price": "$2.50 - $4.00 / pair",
+        "product2_name": "Business Socks",
+        "product2_desc": "Elegant design, premium cotton blend. Comfortable for all-day office wear.",
+        "product2_price": "$3.00 - $5.00 / pair",
+        "product3_name": "Casual Socks",
+        "product3_desc": "Soft, colorful, and stylish. Great for everyday wear and gifts.",
+        "product3_price": "$1.80 - $3.00 / pair",
+        "product4_name": "Custom OEM Socks",
+        "product4_desc": "Your logo, your design, your colors. MOQ from 500 pairs. Free sample available.",
+        "product4_price": "Negotiable",
+        "product5_name": "Ankle Socks",
+        "product5_desc": "Low-cut, invisible design. Perfect for sneakers and casual shoes.",
+        "product5_price": "$1.50 - $2.60 / pair",
+        "product6_name": "Kids Socks",
+        "product6_desc": "Soft and safe for children. Various cute designs available.",
+        "product6_price": "$1.50 - $2.50 / pair",
+        "product7_name": "Baby Socks",
+        "product7_desc": "Ultra-soft cotton for newborns. Anti-slip sole and gentle elastic band.",
+        "product7_price": "$1.20 - $2.00 / pair",
+        "product8_name": "School Socks",
+        "product8_desc": "Durable knee-high socks for school uniforms. Easy to wash and keep white.",
+        "product8_price": "$1.60 - $2.80 / pair",
+        "product9_name": "Toddler Socks",
+        "product9_desc": "Fun cartoon patterns for toddlers. Non-slip grip and breathable fabric.",
+        "product9_price": "$1.30 - $2.20 / pair",
+        "product10_name": "Teen Sports Socks",
+        "product10_desc": "Athletic socks for teenagers. Cushioned, durable, and colorful.",
+        "product10_price": "$2.00 - $3.50 / pair",
+        "footer": "© 2025 Gabriel-JL Co., Ltd. All rights reserved. | Contact: He YA | hejingling51@gmail.com",
+        "lang_switch": "🇨🇳 中文",
+        "advantages_title": "Our Advantages",
+        "advantages": [
+            ("✅", "Quality Control", "Strict QC at every step"),
+            ("🚚", "Fast Delivery", "Worldwide shipping"),
+            ("💰", "Competitive Price", "Factory direct pricing"),
+            ("🎨", "Custom Design", "OEM/ODM welcomed"),
+        ],
+        "no_photo": "Photo coming soon",
+        "photo_hint": "Put your product photos into the `images/` folder with these names:",
+        "cat_all": "🧦 All Products",
+        "cat_children": "🧒 Children SOCKS",
+        "cat_adult": "🧑 Adult SOCKS",
+        "cat_label": "Category",
+    },
+    "zh": {
+        "title": "Gabriel-JL 有限公司",
+        "subtitle": "專業襪子製造商與供應商",
+        "nav_products": "🧦 產品展示",
+        "nav_about": "ℹ️ 關於我們",
+        "nav_contact": "📬 聯絡我們 / 留言",
+        "products_title": "我們的襪子系列",
+        "products_desc": "高品質襪子，適合各種場合 — 運動、休閒、商務及訂製設計。",
+        "about_title": "關於 Gabriel-JL 有限公司",
+        "about_text": """
+**Gabriel-JL 有限公司**（聯絡人：He YA）是一家專業的襪子製造商和出口商。
+
+我們專注於：
+- 🏃 運動襪（跑步、籃球、騎行）
+- 👔 商務正裝襪
+- 🧦 休閒時尚襪
+- 🏭 訂製 OEM/ODM 訂單
+- 🌿 有機棉與竹纖維襪
+
+憑藉多年的紡織行業經驗，我們致力於以有競爭力的價格提供優質產品。
+
+**郵箱：** hejingling51@gmail.com
+""",
+        "contact_title": "給我們留言",
+        "contact_desc": "歡迎聯絡我們！請在下方留言，我們會在24小時內回覆您。",
+        "form_name": "您的姓名",
+        "form_email": "您的郵箱",
+        "form_message": "您的留言",
+        "form_submit": "發送留言",
+        "form_success": "✅ 感謝您！我們已收到您的留言，會盡快與您聯絡。",
+        "form_error": "⚠️ 請填寫所有欄位。",
+        "board_title": "💬 留言板",
+        "board_empty": "目前還沒有留言，歡迎成為第一個留言的人！",
+        "board_loading": "留言載入中...",
+        "product1_name": "運動襪",
+        "product1_desc": "透氣吸汗，加厚緩衝鞋底。適合跑步、健身及戶外運動。",
+        "product1_price": "$2.50 - $4.00 / 雙",
+        "product2_name": "商務襪",
+        "product2_desc": "優雅設計，優質棉混紡。適合全天辦公穿著，舒適有型。",
+        "product2_price": "$3.00 - $5.00 / 雙",
+        "product3_name": "休閒襪",
+        "product3_desc": "柔軟多彩，時尚百搭。適合日常穿著和送禮。",
+        "product3_price": "$1.80 - $3.00 / 雙",
+        "product4_name": "訂製 OEM 襪子",
+        "product4_desc": "您的Logo、您的設計、您的顏色。起訂量500雙起，可提供免費樣品。",
+        "product4_price": "面議",
+        "product5_name": "船襪 / 隱形襪",
+        "product5_desc": "低筒隱形設計。完美搭配運動鞋與休閒鞋。",
+        "product5_price": "$1.50 - $2.60 / 雙",
+        "product6_name": "兒童襪",
+        "product6_desc": "柔軟安全，適合兒童。多款可愛設計可選。",
+        "product6_price": "$1.50 - $2.50 / 雙",
+        "product7_name": "嬰兒襪",
+        "product7_desc": "超柔軟純棉，適合新生兒。防滑鞋底與溫和鬆緊帶。",
+        "product7_price": "$1.20 - $2.00 / 雙",
+        "product8_name": "學生襪",
+        "product8_desc": "耐穿及膝襪，適合校服。易洗滌、常保潔白。",
+        "product8_price": "$1.60 - $2.80 / 雙",
+        "product9_name": "幼兒襪",
+        "product9_desc": "趣味卡通圖案，適合幼兒。防滑設計、透氣材質。",
+        "product9_price": "$1.30 - $2.20 / 雙",
+        "product10_name": "青少年運動襪",
+        "product10_desc": "適合青少年的運動襪。加厚耐穿、色彩活潑。",
+        "product10_price": "$2.00 - $3.50 / 雙",
+        "footer": "© 2025 Gabriel-JL 有限公司 版權所有 | 聯絡人: He YA | hejingling51@gmail.com",
+        "lang_switch": "🇬🇧 English",
+        "advantages_title": "我們的優勢",
+        "advantages": [
+            ("✅", "品質把控", "每一步嚴格質檢"),
+            ("🚚", "快速交付", "全球發貨"),
+            ("💰", "價格優勢", "工廠直銷價格"),
+            ("🎨", "訂製設計", "歡迎OEM/ODM"),
+        ],
+        "no_photo": "照片即將上傳",
+        "photo_hint": "請將您的產品照片放入 `images/` 資料夾，檔名如下：",
+        "cat_all": "🧦 全部產品",
+        "cat_children": "🧒 兒童襪",
+        "cat_adult": "🧑 成人襪",
+        "cat_label": "產品分類",
+    }
+}
+
+PRODUCT_CATEGORY = {
+    "product1": "adult", "product2": "adult", "product3": "adult",
+    "product4": "adult", "product5": "adult",
+    "product6": "children", "product7": "children", "product8": "children",
+    "product9": "children", "product10": "children",
+}
+
+
+# ==================== Session State ====================
+if "lang" not in st.session_state:
+    st.session_state.lang = "en"
+if "form_status" not in st.session_state:
+    st.session_state.form_status = None
+if "category" not in st.session_state:
+    st.session_state.category = "all"
+
+
+def toggle_lang():
+    st.session_state.lang = "zh" if st.session_state.lang == "en" else "en"
+
+
+def handle_form_submit():
+    name = st.session_state.get("input_name", "").strip()
+    email = st.session_state.get("input_email", "").strip()
+    message = st.session_state.get("input_message", "").strip()
+    if not name or not email or not message:
+        st.session_state.form_status = "error"
+        return
+    if api_post_message(name, email, message):
+        st.session_state.form_status = "success"
+        st.session_state.input_name = ""
+        st.session_state.input_email = ""
+        st.session_state.input_message = ""
+    else:
+        st.session_state.form_status = "api_error"
+
+
+T = TEXTS[st.session_state.lang]
+
+
+# ==================== 頂部橫幅 ====================
+banner_html = (
+    '<div class="header-banner">' + ducks_html +
+    '<h1>' + T["title"] + '</h1>' +
+    '<p>' + T["subtitle"] + '</p>' +
+    '</div>'
+)
+st.markdown(banner_html, unsafe_allow_html=True)
+
+counter_html = (
+    '<div class="visit-counter">'
+    '<span>👀 瀏覽次數</span>'
+    '<span class="num">' + f"{visit_count:,}" + '</span>'
+    '</div>'
+)
+st.markdown(counter_html, unsafe_allow_html=True)
+
+col1, col2, col3 = st.columns([1, 6, 1])
+with col3:
+    if st.button(T["lang_switch"], key="lang_btn"):
+        toggle_lang()
+        st.rerun()
+
+
+# ==================== 側邊欄 ====================
+with st.sidebar:
+    st.markdown("### 🧦 " + T["title"])
+    st.markdown("---")
+    page = st.radio(
+        "Navigation",
+        [T["nav_products"], T["nav_about"], T["nav_contact"]],
+        label_visibility="collapsed"
+    )
+
+    if page == T["nav_products"]:
+        st.markdown("---")
+        st.markdown("**" + T["cat_label"] + "**")
+        cat_options = {
+            "all": T["cat_all"],
+            "children": T["cat_children"],
+            "adult": T["cat_adult"],
+        }
+        cat_keys = list(cat_options.keys())
+        cat_labels = list(cat_options.values())
         try:
-            limit = max(1, min(int(request.args.get("limit", 200)), 500))
-        except (TypeError, ValueError):
-            limit = 200
-        return jsonify([m.to_dict() for m in list_messages(limit)])
+            current_idx = cat_keys.index(st.session_state.category)
+        except ValueError:
+            current_idx = 0
+        selected_label = st.radio(
+            "Category", cat_labels, index=current_idx,
+            label_visibility="collapsed", key="cat_radio"
+        )
+        st.session_state.category = cat_keys[cat_labels.index(selected_label)]
 
-    @app.route("/api/messages", methods=["POST"])
-    def api_add_message():
-        data = request.get_json(silent=True) or {}
-        name = (data.get("name") or "").strip()
-        email = (data.get("email") or "").strip()
-        message = (data.get("message") or "").strip()
-
-        if not name or not email or not message:
-            return jsonify({"ok": False, "error": "missing_fields"}), 400
-        if "@" not in email or "." not in email.split("@")[-1]:
-            return jsonify({"ok": False, "error": "invalid_email"}), 400
-        if len(name) > 80 or len(email) > 160 or len(message) > 2000:
-            return jsonify({"ok": False, "error": "too_long"}), 400
-
-        msg = add_message(name, email, message)
-        return jsonify({"ok": True, "message": msg.to_dict()}), 201
-
-    # ==================== 瀏覽計次 API ====================
-    @app.route("/api/visits", methods=["GET"])
-    def api_get_visits():
-        return jsonify({"count": VisitCounter.get_count()})
-
-    @app.route("/api/visits", methods=["POST"])
-    def api_inc_visits():
-        return jsonify({"count": VisitCounter.increment()})
-
-    # ==================== 健康檢查 ====================
-    @app.route("/api/health", methods=["GET"])
-    def api_health():
-        return jsonify({"ok": True})
-
-    # ==================== 錯誤處理 ====================
-    @app.errorhandler(404)
-    def not_found(e):
-        return jsonify({"ok": False, "error": "not_found",
-                        "hint": "請訪問 / 查看可用 API 列表"}), 404
-
-    @app.errorhandler(500)
-    def internal_error(e):
-        db.session.rollback()
-        return jsonify({"ok": False, "error": "internal_error"}), 500
-
-    return app
+    st.markdown("---")
+    st.markdown("**📧 Email:**  \nhejingling51@gmail.com")
+    st.markdown("**👤 Contact:**  \nHe YA")
+    st.markdown("---")
+    st.caption("Gabriel-JL Co., Ltd.")
 
 
-app = create_app()
+# ==================== 產品展示 ====================
+if page == T["nav_products"]:
+    st.markdown("## " + T["products_title"])
+    st.markdown("*" + T["products_desc"] + "*")
+    st.markdown("---")
+
+    all_products = [
+        {"key": "product1", "name": T["product1_name"], "desc": T["product1_desc"],
+         "price": T["product1_price"], "emoji": "🏃"},
+        {"key": "product2", "name": T["product2_name"], "desc": T["product2_desc"],
+         "price": T["product2_price"], "emoji": "👔"},
+        {"key": "product3", "name": T["product3_name"], "desc": T["product3_desc"],
+         "price": T["product3_price"], "emoji": "🧦"},
+        {"key": "product4", "name": T["product4_name"], "desc": T["product4_desc"],
+         "price": T["product4_price"], "emoji": "🎨"},
+        {"key": "product5", "name": T["product5_name"], "desc": T["product5_desc"],
+         "price": T["product5_price"], "emoji": "👟"},
+        {"key": "product6", "name": T["product6_name"], "desc": T["product6_desc"],
+         "price": T["product6_price"], "emoji": "🧒"},
+        {"key": "product7", "name": T["product7_name"], "desc": T["product7_desc"],
+         "price": T["product7_price"], "emoji": "👶"},
+        {"key": "product8", "name": T["product8_name"], "desc": T["product8_desc"],
+         "price": T["product8_price"], "emoji": "🎒"},
+        {"key": "product9", "name": T["product9_name"], "desc": T["product9_desc"],
+         "price": T["product9_price"], "emoji": "🧸"},
+        {"key": "product10", "name": T["product10_name"], "desc": T["product10_desc"],
+         "price": T["product10_price"], "emoji": "⚽"},
+    ]
+
+    if st.session_state.category == "children":
+        products = [p for p in all_products if PRODUCT_CATEGORY[p["key"]] == "children"]
+        st.markdown("### " + T["cat_children"])
+    elif st.session_state.category == "adult":
+        products = [p for p in all_products if PRODUCT_CATEGORY[p["key"]] == "adult"]
+        st.markdown("### " + T["cat_adult"])
+    else:
+        products = all_products
+
+    if not products:
+        st.info("No products in this category yet.")
+    else:
+        cols = st.columns(2)
+        for i, prod in enumerate(products):
+            with cols[i % 2]:
+                st.markdown("### " + prod["emoji"] + " " + prod["name"])
+                img_b64 = load_image_b64(PRODUCT_IMAGES[prod["key"]])
+                if img_b64:
+                    img_html = (
+                        '<img src="data:image/jpeg;base64,' + img_b64 + '" '
+                        'style="width:100%; border-radius:10px;" />'
+                    )
+                    st.markdown(img_html, unsafe_allow_html=True)
+                else:
+                    placeholder_html = (
+                        '<div style="background: linear-gradient(135deg, #f5f7fa, #e4e8ec);'
+                        'border-radius: 10px; padding: 3rem; text-align: center;'
+                        'border: 2px dashed #ccc; color: #aaa;">'
+                        '<div style="font-size: 3rem;">' + prod["emoji"] + '</div>'
+                        '<p>' + T["no_photo"] + '</p>'
+                        '</div>'
+                    )
+                    st.markdown(placeholder_html, unsafe_allow_html=True)
+                card_html = (
+                    '<div class="product-card">'
+                    '<p class="desc">' + prod["desc"] + '</p>'
+                    '<p class="price">' + prod["price"] + '</p>'
+                    '</div>'
+                )
+                st.markdown(card_html, unsafe_allow_html=True)
+
+    with st.expander("📁 " + T["photo_hint"]):
+        st.code("\n".join(["images/" + v for v in PRODUCT_IMAGES.values()]))
 
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+# ==================== 關於我們 ====================
+elif page == T["nav_about"]:
+    st.markdown("## " + T["about_title"])
+    st.markdown("---")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.markdown(T["about_text"])
+    with col2:
+        contact_html = (
+            '<div class="contact-card">'
+            '<h3>📬 Contact</h3>'
+            '<p><strong>He YA</strong></p>'
+            '<p><a href="mailto:hejingling51@gmail.com">hejingling51@gmail.com</a></p>'
+            '<p style="margin-top:1rem; font-size:0.85rem; opacity:0.8;">'
+            'Gabriel-JL Co., Ltd.<br>Socks Manufacturer & Exporter'
+            '</p></div>'
+        )
+        st.markdown(contact_html, unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("### 🏭 " + T["advantages_title"])
+    adv_cols = st.columns(4)
+    for i, (icon, title, desc) in enumerate(T["advantages"]):
+        with adv_cols[i]:
+            st.markdown(f"### {icon} {title}")
+            st.caption(desc)
+
+
+# ==================== 聯絡我們 / 留言板 ====================
+elif page == T["nav_contact"]:
+    st.markdown("## " + T["contact_title"])
+    st.markdown("*" + T["contact_desc"] + "*")
+    st.markdown("---")
+
+    # ---------- 留言表單 ----------
+    with st.form("contact_form", clear_on_submit=True):
+        st.text_input(T["form_name"], key="input_name")
+        st.text_input(T["form_email"], key="input_email")
+        st.text_area(T["form_message"], key="input_message", height=120)
+        submitted = st.form_submit_button(T["form_submit"], type="primary")
+
+    if submitted:
+        handle_form_submit()
+        st.rerun()
+
+    # ---------- 狀態訊息 ----------
+    status = st.session_state.form_status
+    if status == "success":
+        st.success(T["form_success"])
+        st.session_state.form_status = None
+    elif status == "error":
+        st.error(T["form_error"])
+        st.session_state.form_status = None
+    elif status == "api_error":
+        st.error("⚠️ API 連線失敗，請稍後再試。 / Failed to connect to API.")
+        st.session_state.form_status = None
+
+    # ---------- 留言板 ----------
+    st.markdown("---")
+    st.markdown("### " + T["board_title"])
+
+    with st.spinner(T["board_loading"]):
+        messages = api_get_messages(limit=50)
+
+    if not messages:
+        st.info(T["board_empty"])
+    else:
+        # 最新在上
+        try:
+            messages = sorted(
+                messages,
+                key=lambda m: m.get("created_at", ""),
+                reverse=True
+            )
+        except Exception:
+            pass
+
+        for m in messages:
+            name = m.get("name", "Anonymous")
+            created = m.get("created_at", "")
+            body = (m.get("message", "") or
