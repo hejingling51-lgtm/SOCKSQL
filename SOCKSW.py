@@ -14,7 +14,7 @@ API_BASE = "https://socksql-1.onrender.com"
 def api_get_messages(limit=200):
     try:
         r = requests.get(f"{API_BASE}/api/messages",
-                         params={"limit": limit}, timeout=5)
+                         params={"limit": limit}, timeout=60)
         r.raise_for_status()
         return r.json()
     except Exception as e:
@@ -26,7 +26,7 @@ def api_post_message(name, email, message):
     try:
         r = requests.post(f"{API_BASE}/api/messages",
                           json={"name": name, "email": email, "message": message},
-                          timeout=5)
+                          timeout=60)
         return r.status_code == 201
     except Exception as e:
         st.warning(f"送出留言失敗：{e}")
@@ -35,7 +35,7 @@ def api_post_message(name, email, message):
 
 def api_get_visits():
     try:
-        r = requests.get(f"{API_BASE}/api/visits", timeout=5)
+        r = requests.get(f"{API_BASE}/api/visits", timeout=60)
         r.raise_for_status()
         return r.json().get("count", 0)
     except Exception:
@@ -44,7 +44,7 @@ def api_get_visits():
 
 def api_inc_visits():
     try:
-        r = requests.post(f"{API_BASE}/api/visits", timeout=5)
+        r = requests.post(f"{API_BASE}/api/visits", timeout=60)
         r.raise_for_status()
         return r.json().get("count", 0)
     except Exception:
@@ -175,7 +175,7 @@ else:
     visit_count = api_get_visits()
 
 
-# ==================== 自訂 CSS（與原本相同） ====================
+# ==================== 自訂 CSS ====================
 CSS = """
 <style>
     * { font-family: 'Helvetica Neue', 'Microsoft YaHei', sans-serif; }
@@ -255,6 +255,16 @@ CSS = """
         color: #888; font-size: 0.85rem;
         border-top: 1px solid #eee; margin-top: 3rem;
     }
+    .msg-card {
+        background: #fff; border-left: 4px solid #a8b8e8;
+        border-radius: 8px; padding: 1rem 1.2rem; margin-bottom: 0.8rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+    .msg-card .meta {
+        color: #888; font-size: 0.85rem; margin-bottom: 0.3rem;
+    }
+    .msg-card .name { color: #0f3460; font-weight: 700; }
+    .msg-card .body { color: #333; line-height: 1.6; white-space: pre-wrap; }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
 </style>
@@ -262,7 +272,7 @@ CSS = """
 st.markdown(CSS, unsafe_allow_html=True)
 
 
-# ==================== 雙語字典（與原本相同） ====================
+# ==================== 雙語字典 ====================
 TEXTS = {
     "en": {
         "title": "Gabriel-JL Co., Ltd.",
@@ -295,6 +305,9 @@ With years of experience in the textile industry, we are committed to providing 
         "form_submit": "Send Message",
         "form_success": "✅ Thank you! Your message has been received. We'll contact you soon.",
         "form_error": "⚠️ Please fill in all fields.",
+        "board_title": "💬 Message Board",
+        "board_empty": "No messages yet. Be the first to leave one!",
+        "board_loading": "Loading messages...",
         "product1_name": "Sports Socks",
         "product1_desc": "Breathable, moisture-wicking, cushioned sole. Perfect for running and outdoor activities.",
         "product1_price": "$2.50 - $4.00 / pair",
@@ -372,6 +385,9 @@ With years of experience in the textile industry, we are committed to providing 
         "form_submit": "發送留言",
         "form_success": "✅ 感謝您！我們已收到您的留言，會盡快與您聯絡。",
         "form_error": "⚠️ 請填寫所有欄位。",
+        "board_title": "💬 留言板",
+        "board_empty": "目前還沒有留言，歡迎成為第一個留言的人！",
+        "board_loading": "留言載入中...",
         "product1_name": "運動襪",
         "product1_desc": "透氣吸汗，加厚緩衝鞋底。適合跑步、健身及戶外運動。",
         "product1_price": "$2.50 - $4.00 / 雙",
@@ -621,4 +637,65 @@ elif page == T["nav_about"]:
         with adv_cols[i]:
             st.markdown(f"### {icon} {title}")
             st.caption(desc)
+
+
+# ==================== 聯絡我們 / 留言板 ====================
+elif page == T["nav_contact"]:
+    st.markdown("## " + T["contact_title"])
+    st.markdown("*" + T["contact_desc"] + "*")
+    st.markdown("---")
+
+    # ---------- 留言表單 ----------
+    with st.form("contact_form", clear_on_submit=True):
+        st.text_input(T["form_name"], key="input_name")
+        st.text_input(T["form_email"], key="input_email")
+        st.text_area(T["form_message"], key="input_message", height=120)
+        submitted = st.form_submit_button(T["form_submit"], type="primary")
+
+    if submitted:
+        handle_form_submit()
+        st.rerun()
+
+    # ---------- 狀態訊息 ----------
+    status = st.session_state.form_status
+    if status == "success":
+        st.success(T["form_success"])
+        st.session_state.form_status = None
+    elif status == "error":
+        st.error(T["form_error"])
+        st.session_state.form_status = None
+    elif status == "api_error":
+        st.error("⚠️ API 連線失敗，請稍後再試。 / Failed to connect to API.")
+        st.session_state.form_status = None
+
+    # ---------- 留言板 ----------
+    st.markdown("---")
+    st.markdown("### " + T["board_title"])
+
+    with st.spinner(T["board_loading"]):
+        messages = api_get_messages(limit=50)
+
+    if not messages:
+        st.info(T["board_empty"])
+    else:
+        try:
+            messages = sorted(
+                messages,
+                key=lambda m: m.get("created_at", ""),
+                reverse=True
+            )
+        except Exception:
+            pass
+
+        for m in messages:
+            name = m.get("name", "Anonymous")
+            created = m.get("created_at", "")
+            body = (m.get("message", "") or "").strip()
+            st.markdown(
+                '<div class="msg-card">'
+                '<div class="meta"><span class="name">' + name + '</span> · ' + created + '</div>'
+                '<div class="body">' + body + '</div>'
+                '</div>',
+                unsafe_allow_html=True
+            )
 
