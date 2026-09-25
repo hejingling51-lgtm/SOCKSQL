@@ -175,7 +175,7 @@ ducks_html = (
 )
 
 
-# ==================== 瀏覽計次（改用 API，加 30 秒快取） ====================
+# ==================== 瀏覽計次（API + 30 秒快取） ====================
 @st.cache_data(ttl=30, show_spinner=False)
 def _cached_get_visits():
     return api_get_visits()
@@ -546,4 +546,142 @@ if page == T["nav_products"]:
         {"key": "product2", "name": T["product2_name"], "desc": T["product2_desc"],
          "price": T["product2_price"], "emoji": "👔"},
         {"key": "product3", "name": T["product3_name"], "desc": T["product3_desc"],
-         "
+         "price": T["product3_price"], "emoji": "🧦"},
+        {"key": "product4", "name": T["product4_name"], "desc": T["product4_desc"],
+         "price": T["product4_price"], "emoji": "🎨"},
+        {"key": "product5", "name": T["product5_name"], "desc": T["product5_desc"],
+         "price": T["product5_price"], "emoji": "👟"},
+        {"key": "product6", "name": T["product6_name"], "desc": T["product6_desc"],
+         "price": T["product6_price"], "emoji": "🧒"},
+        {"key": "product7", "name": T["product7_name"], "desc": T["product7_desc"],
+         "price": T["product7_price"], "emoji": "👶"},
+        {"key": "product8", "name": T["product8_name"], "desc": T["product8_desc"],
+         "price": T["product8_price"], "emoji": "🎒"},
+        {"key": "product9", "name": T["product9_name"], "desc": T["product9_desc"],
+         "price": T["product9_price"], "emoji": "🧸"},
+        {"key": "product10", "name": T["product10_name"], "desc": T["product10_desc"],
+         "price": T["product10_price"], "emoji": "⚽"},
+    ]
+
+    if st.session_state.category == "children":
+        products = [p for p in all_products if PRODUCT_CATEGORY[p["key"]] == "children"]
+        st.markdown("### " + T["cat_children"])
+    elif st.session_state.category == "adult":
+        products = [p for p in all_products if PRODUCT_CATEGORY[p["key"]] == "adult"]
+        st.markdown("### " + T["cat_adult"])
+    else:
+        products = all_products
+
+    if not products:
+        st.info("No products in this category yet.")
+    else:
+        cols = st.columns(2)
+        for i, prod in enumerate(products):
+            with cols[i % 2]:
+                st.markdown("### " + prod["emoji"] + " " + prod["name"])
+                img_b64 = load_image_b64(PRODUCT_IMAGES[prod["key"]])
+                if img_b64:
+                    img_html = (
+                        '<img src="data:image/jpeg;base64,' + img_b64 + '" '
+                        'style="width:100%; border-radius:10px;" />'
+                    )
+                    st.markdown(img_html, unsafe_allow_html=True)
+                else:
+                    placeholder_html = (
+                        '<div style="background: linear-gradient(135deg, #f5f7fa, #e4e8ec);'
+                        'border-radius: 10px; padding: 3rem; text-align: center;'
+                        'border: 2px dashed #ccc; color: #aaa;">'
+                        '<div style="font-size: 3rem;">' + prod["emoji"] + '</div>'
+                        '<p>' + T["no_photo"] + '</p>'
+                        '</div>'
+                    )
+                    st.markdown(placeholder_html, unsafe_allow_html=True)
+                card_html = (
+                    '<div class="product-card">'
+                    '<p class="desc">' + prod["desc"] + '</p>'
+                    '<p class="price">' + prod["price"] + '</p>'
+                    '</div>'
+                )
+                st.markdown(card_html, unsafe_allow_html=True)
+
+    with st.expander("📁 " + T["photo_hint"]):
+        st.code("\n".join(["images/" + v for v in PRODUCT_IMAGES.values()]))
+
+
+# ==================== 關於我們 ====================
+elif page == T["nav_about"]:
+    st.markdown("## " + T["about_title"])
+    st.markdown("---")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.markdown(T["about_text"])
+    with col2:
+        contact_html = (
+            '<div class="contact-card">'
+            '<h3>📬 Contact</h3>'
+            '<p><strong>He YA</strong></p>'
+            '<p><a href="mailto:hejingling51@gmail.com">hejingling51@gmail.com</a></p>'
+            '<p style="margin-top:1rem; font-size:0.85rem; opacity:0.8;">'
+            'Gabriel-JL Co., Ltd.<br>Socks Manufacturer & Exporter'
+            '</p></div>'
+        )
+        st.markdown(contact_html, unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("### 🏭 " + T["advantages_title"])
+    adv_cols = st.columns(4)
+    for i, (icon, title, desc) in enumerate(T["advantages"]):
+        with adv_cols[i]:
+            adv_html = (
+                '<div style="text-align:center; padding:1rem;">'
+                '<div style="font-size:2rem;">' + icon + '</div>'
+                '<h4>' + title + '</h4>'
+                '<p style="color:#777; font-size:0.9rem;">' + desc + '</p>'
+                '</div>'
+            )
+            st.markdown(adv_html, unsafe_allow_html=True)
+
+
+# ==================== 聯絡我們 / 留言 ====================
+elif page == T["nav_contact"]:
+    st.markdown("## " + T["contact_title"])
+    st.markdown("---")
+    st.markdown(T["contact_desc"])
+
+    # 顯示表單狀態
+    if st.session_state.form_status == "success":
+        st.success(T["form_success"])
+    elif st.session_state.form_status == "error":
+        st.error(T["form_error"])
+    elif st.session_state.form_status == "api_error":
+        detail = st.session_state.form_error_detail
+        if detail == "invalid_email":
+            st.error(T["err_invalid_email"])
+        elif detail == "too_long":
+            st.error(T["err_too_long"])
+        elif detail == "missing_fields":
+            st.error(T["err_missing_fields"])
+        else:
+            st.error(T["api_error"] + (f" ({detail})" if detail else ""))
+
+    # 留言表單（動態 key，送出成功後清空）
+    form_key = st.session_state.form_key
+    name = st.text_input(T["form_name"], key=f"input_name_{form_key}")
+    email = st.text_input(T["form_email"], key=f"input_email_{form_key}")
+    message = st.text_area(T["form_message"], key=f"input_message_{form_key}")
+
+    if st.button(T["form_submit"], key=f"submit_btn_{form_key}"):
+        name = (name or "").strip()
+        email = (email or "").strip()
+        message = (message or "").strip()
+
+        if not name or not email or not message:
+            st.session_state.form_status = "error"
+            st.session_state.form_error_detail = "missing_fields"
+        else:
+            ok, err = api_post_message(name, email, message)
+            if ok:
+                st.session_state.form_status = "success"
+                st.session_state.form_error_detail = None
+                st.session_state.form_key += 1   # 清空輸入框
+                st.rerun
