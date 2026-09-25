@@ -7,14 +7,14 @@ import requests
 from PIL import Image, ImageFilter, ImageDraw
 
 # ==================== API 設定 ====================
-API_BASE = os.environ.get("API_BASE", "https://socksql.onrender.com")
+API_BASE = os.environ.get("API_BASE", "http://127.0.0.1:5000")
 
 
 # ==================== API 工具函式 ====================
-def api_get_messages(limit=50):
+def api_get_messages(limit=200):
     try:
         r = requests.get(f"{API_BASE}/api/messages",
-                         params={"limit": limit}, timeout=15)
+                         params={"limit": limit}, timeout=5)
         r.raise_for_status()
         return r.json()
     except Exception as e:
@@ -23,27 +23,19 @@ def api_get_messages(limit=50):
 
 
 def api_post_message(name, email, message):
-    """回傳 (ok: bool, error: str|None)。"""
     try:
-        r = requests.post(
-            f"{API_BASE}/api/messages",
-            json={"name": name, "email": email, "message": message},
-            timeout=15,
-        )
-        if r.status_code == 201:
-            return True, None
-        try:
-            err = r.json().get("error", f"HTTP {r.status_code}")
-        except Exception:
-            err = f"HTTP {r.status_code}"
-        return False, err
+        r = requests.post(f"{API_BASE}/api/messages",
+                          json={"name": name, "email": email, "message": message},
+                          timeout=5)
+        return r.status_code == 201
     except Exception as e:
-        return False, str(e)
+        st.warning(f"送出留言失敗：{e}")
+        return False
 
 
 def api_get_visits():
     try:
-        r = requests.get(f"{API_BASE}/api/visits", timeout=15)
+        r = requests.get(f"{API_BASE}/api/visits", timeout=5)
         r.raise_for_status()
         return r.json().get("count", 0)
     except Exception:
@@ -52,7 +44,7 @@ def api_get_visits():
 
 def api_inc_visits():
     try:
-        r = requests.post(f"{API_BASE}/api/visits", timeout=15)
+        r = requests.post(f"{API_BASE}/api/visits", timeout=5)
         r.raise_for_status()
         return r.json().get("count", 0)
     except Exception:
@@ -64,12 +56,12 @@ st.set_page_config(
     page_title="Gabriel-JL Co., Ltd. | SOCKS",
     page_icon="🧦",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded"
 )
 
 # ==================== 路徑設定 ====================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-IMAGE_DIR = BASE_DIR
+IMAGE_DIR = os.path.join(BASE_DIR, "images")
 
 PRODUCT_IMAGES = {f"product{i}": f"product{i}.jpg" for i in range(1, 11)}
 DUCK_IMAGE = "duck.jpg"
@@ -152,7 +144,7 @@ def load_image_b64(filename):
         max_side = 1200
         if max(img.size) > max_side:
             ratio = max_side / max(img.size)
-            img = img.resize((int(img.width * ratio), int(img.height * ratio)),
+            img = img.resize((int(img.width*ratio), int(img.height*ratio)),
                              Image.LANCZOS)
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=85)
@@ -175,20 +167,15 @@ ducks_html = (
 )
 
 
-# ==================== 瀏覽計次（API + 30 秒快取） ====================
-@st.cache_data(ttl=30, show_spinner=False)
-def _cached_get_visits():
-    return api_get_visits()
-
-
+# ==================== 瀏覽計次（改用 API） ====================
 if "visited" not in st.session_state:
     st.session_state.visited = True
     visit_count = api_inc_visits()
 else:
-    visit_count = _cached_get_visits()
+    visit_count = api_get_visits()
 
 
-# ==================== 自訂 CSS ====================
+# ==================== 自訂 CSS（與原本相同） ====================
 CSS = """
 <style>
     * { font-family: 'Helvetica Neue', 'Microsoft YaHei', sans-serif; }
@@ -275,7 +262,7 @@ CSS = """
 st.markdown(CSS, unsafe_allow_html=True)
 
 
-# ==================== 雙語字典 ====================
+# ==================== 雙語字典（與原本相同） ====================
 TEXTS = {
     "en": {
         "title": "Gabriel-JL Co., Ltd.",
@@ -353,12 +340,6 @@ With years of experience in the textile industry, we are committed to providing 
         "cat_children": "🧒 Children SOCKS",
         "cat_adult": "🧑 Adult SOCKS",
         "cat_label": "Category",
-        "message_log": "📝 Message Log",
-        "no_messages": "No messages yet. Be the first to leave one!",
-        "api_error": "⚠️ API connection failed. Please try again later.",
-        "err_invalid_email": "⚠️ Invalid email format.",
-        "err_too_long": "⚠️ Input too long.",
-        "err_missing_fields": "⚠️ Please fill in all fields.",
     },
     "zh": {
         "title": "Gabriel-JL 有限公司",
@@ -436,13 +417,7 @@ With years of experience in the textile industry, we are committed to providing 
         "cat_children": "🧒 兒童襪",
         "cat_adult": "🧑 成人襪",
         "cat_label": "產品分類",
-        "message_log": "📝 留言紀錄",
-        "no_messages": "目前沒有留言，歡迎成為第一個留言的人！",
-        "api_error": "⚠️ API 連線失敗，請稍後再試。",
-        "err_invalid_email": "⚠️ 電子郵件格式不正確。",
-        "err_too_long": "⚠️ 輸入內容過長。",
-        "err_missing_fields": "⚠️ 請填寫所有欄位。",
-    },
+    }
 }
 
 PRODUCT_CATEGORY = {
@@ -458,16 +433,28 @@ if "lang" not in st.session_state:
     st.session_state.lang = "en"
 if "form_status" not in st.session_state:
     st.session_state.form_status = None
-if "form_error_detail" not in st.session_state:
-    st.session_state.form_error_detail = None
 if "category" not in st.session_state:
     st.session_state.category = "all"
-if "form_key" not in st.session_state:
-    st.session_state.form_key = 0
 
 
 def toggle_lang():
     st.session_state.lang = "zh" if st.session_state.lang == "en" else "en"
+
+
+def handle_form_submit():
+    name = st.session_state.get("input_name", "").strip()
+    email = st.session_state.get("input_email", "").strip()
+    message = st.session_state.get("input_message", "").strip()
+    if not name or not email or not message:
+        st.session_state.form_status = "error"
+        return
+    if api_post_message(name, email, message):
+        st.session_state.form_status = "success"
+        st.session_state.input_name = ""
+        st.session_state.input_email = ""
+        st.session_state.input_message = ""
+    else:
+        st.session_state.form_status = "api_error"
 
 
 T = TEXTS[st.session_state.lang]
@@ -504,7 +491,7 @@ with st.sidebar:
     page = st.radio(
         "Navigation",
         [T["nav_products"], T["nav_about"], T["nav_contact"]],
-        label_visibility="collapsed",
+        label_visibility="collapsed"
     )
 
     if page == T["nav_products"]:
@@ -523,7 +510,7 @@ with st.sidebar:
             current_idx = 0
         selected_label = st.radio(
             "Category", cat_labels, index=current_idx,
-            label_visibility="collapsed", key="cat_radio",
+            label_visibility="collapsed", key="cat_radio"
         )
         st.session_state.category = cat_keys[cat_labels.index(selected_label)]
 
@@ -632,56 +619,6 @@ elif page == T["nav_about"]:
     adv_cols = st.columns(4)
     for i, (icon, title, desc) in enumerate(T["advantages"]):
         with adv_cols[i]:
-            adv_html = (
-                '<div style="text-align:center; padding:1rem;">'
-                '<div style="font-size:2rem;">' + icon + '</div>'
-                '<h4>' + title + '</h4>'
-                '<p style="color:#777; font-size:0.9rem;">' + desc + '</p>'
-                '</div>'
-            )
-            st.markdown(adv_html, unsafe_allow_html=True)
+            st.markdown(f"### {icon} {title}")
+            st.caption(desc)
 
-
-# ==================== 聯絡我們 / 留言 ====================
-elif page == T["nav_contact"]:
-    st.markdown("## " + T["contact_title"])
-    st.markdown("---")
-    st.markdown(T["contact_desc"])
-
-    # 顯示表單狀態
-    if st.session_state.form_status == "success":
-        st.success(T["form_success"])
-    elif st.session_state.form_status == "error":
-        st.error(T["form_error"])
-    elif st.session_state.form_status == "api_error":
-        detail = st.session_state.form_error_detail
-        if detail == "invalid_email":
-            st.error(T["err_invalid_email"])
-        elif detail == "too_long":
-            st.error(T["err_too_long"])
-        elif detail == "missing_fields":
-            st.error(T["err_missing_fields"])
-        else:
-            st.error(T["api_error"] + (f" ({detail})" if detail else ""))
-
-    # 留言表單（動態 key，送出成功後清空）
-    form_key = st.session_state.form_key
-    name = st.text_input(T["form_name"], key=f"input_name_{form_key}")
-    email = st.text_input(T["form_email"], key=f"input_email_{form_key}")
-    message = st.text_area(T["form_message"], key=f"input_message_{form_key}")
-
-    if st.button(T["form_submit"], key=f"submit_btn_{form_key}"):
-        name = (name or "").strip()
-        email = (email or "").strip()
-        message = (message or "").strip()
-
-        if not name or not email or not message:
-            st.session_state.form_status = "error"
-            st.session_state.form_error_detail = "missing_fields"
-        else:
-            ok, err = api_post_message(name, email, message)
-            if ok:
-                st.session_state.form_status = "success"
-                st.session_state.form_error_detail = None
-                st.session_state.form_key += 1   # 清空輸入框
-                st.rerun
