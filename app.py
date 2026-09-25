@@ -41,6 +41,23 @@ def create_app():
         db.create_all()
         VisitCounter.get_count()
 
+    # ==================== 根路由（首頁） ====================
+    @app.route("/", methods=["GET"])
+    def index():
+        return jsonify({
+            "ok": True,
+            "service": "Gabriel-JL SOCKS API",
+            "version": "1.0",
+            "endpoints": {
+                "GET  /api/messages": "取得留言列表（可選參數 ?limit=200）",
+                "POST /api/messages": "新增留言（JSON: name, email, message）",
+                "GET  /api/visits":   "取得瀏覽次數",
+                "POST /api/visits":   "瀏覽次數 +1",
+                "GET  /api/health":   "健康檢查",
+            }
+        })
+
+    # ==================== 留言 API ====================
     @app.route("/api/messages", methods=["GET"])
     def api_list_messages():
         try:
@@ -66,6 +83,7 @@ def create_app():
         msg = add_message(name, email, message)
         return jsonify({"ok": True, "message": msg.to_dict()}), 201
 
+    # ==================== 瀏覽計次 API ====================
     @app.route("/api/visits", methods=["GET"])
     def api_get_visits():
         return jsonify({"count": VisitCounter.get_count()})
@@ -74,9 +92,16 @@ def create_app():
     def api_inc_visits():
         return jsonify({"count": VisitCounter.increment()})
 
+    # ==================== 健康檢查 ====================
     @app.route("/api/health", methods=["GET"])
     def api_health():
         return jsonify({"ok": True})
+
+    # ==================== 錯誤處理 ====================
+    @app.errorhandler(404)
+    def not_found(e):
+        return jsonify({"ok": False, "error": "not_found",
+                        "hint": "請訪問 / 查看可用 API 列表"}), 404
 
     @app.errorhandler(500)
     def internal_error(e):
